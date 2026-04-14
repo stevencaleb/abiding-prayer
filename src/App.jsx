@@ -416,55 +416,43 @@ export default function JournalingApp() {
         )}
 
         {activeTab === 'instructions' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
-            <div className="bg-stone-900 text-amber-50 rounded-3xl p-5 shadow-2xl border border-stone-700">
-              <BrandBadge>Guided Flow</BrandBadge>
-              <h2 className="text-2xl font-serif mt-2">Abiding Prayer</h2>
-              <p className="text-sm text-amber-100 mt-1">Move slowly. Do not rush. Let each step become prayer.</p>
-            </div>
+          <div className="bg-amber-50 border border-amber-100 rounded-3xl p-5 shadow-sm text-stone-700 space-y-4 animate-in fade-in duration-500">
+            <BrandBadge>Instructions</BrandBadge>
+            <h2 className="text-xl font-serif font-semibold text-stone-800">Instructions Page</h2>
 
-            <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm space-y-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Step 1</p>
-              <h3 className="font-serif text-lg text-stone-800">Become Aware</h3>
-              <p className="text-sm text-stone-700">Turn your attention inward. God is present. You do not need to reach Him—you are with Him now.</p>
-            </div>
+            <p><strong>Goal:</strong> Learning to live continuously in God’s presence. Growing ever deeper in letting go of trying to control outcomes and trusting God instead.</p>
 
-            <div className="bg-amber-50 border border-amber-100 rounded-3xl p-5 shadow-sm space-y-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Step 2</p>
-              <h3 className="font-serif text-lg text-stone-800">Offer Love</h3>
-              <p className="text-sm text-stone-700">Speak simple words to God—love, praise, thanksgiving. Then gently become still before Him.</p>
-            </div>
+            <p>We focus on two types of prayer:</p>
+            <ol className="list-decimal pl-5 text-sm space-y-1">
+              <li>Sitting in God’s presence. Say some words of love, praise, thanksgiving… and then be still and wait in His presence. When you start to lose focus, say some more words of love to God.</li>
+              <li>Prayer without ceasing. This is seeking to maintain awareness of God’s presence all day long.</li>
+            </ol>
 
-            <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm space-y-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Step 3</p>
-              <h3 className="font-serif text-lg text-stone-800">Be Still</h3>
-              <p className="text-sm text-stone-700">Rest in His presence. When your attention drifts, quietly return with simple words of love.</p>
-            </div>
+            <p>Here is a quick reference of the steps for Abiding Prayer. You can use these to help with your journaling for discovering where you still need to grow. Practicing daily will build the habit of living in God’s presence.</p>
 
-            <div className="bg-amber-50 border border-amber-100 rounded-3xl p-5 shadow-sm space-y-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Step 4</p>
-              <h3 className="font-serif text-lg text-stone-800">Walk With Him</h3>
-              <p className="text-sm text-stone-700">Throughout the day, speak to God. Stay aware of Him in ordinary moments.</p>
-            </div>
-
-            <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm space-y-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Step 5</p>
-              <h3 className="font-serif text-lg text-stone-800">Live by Faith</h3>
-              <ul className="text-sm text-stone-700 space-y-1">
-                <li>• Give thanks in everything</li>
-                <li>• Guard your soul</li>
-                <li>• Speak with God often</li>
-                <li>• Ask for grace in all things</li>
+            <div>
+              <h3 className="font-semibold mb-2">Expressions of Faith</h3>
+              <ul className="list-disc pl-5 space-y-1 text-sm">
+                <li>Giving God thanks in everything. Not that He authors bad things but that He is bigger and able to help and work all for good.</li>
+                <li>Guard your soul according to God’s desires. Seek to avoid dwelling on negative things, not judging others, nor obsessing over figuring things out. Rather constantly choosing God’s presence and praising Him.</li>
+                <li>Talking to God all day long, seeking to stay in conscious contact with Him.</li>
+                <li>Asking God for grace for every task.</li>
               </ul>
             </div>
 
-            <div className="bg-stone-50 border border-stone-200 rounded-3xl p-5 shadow-sm space-y-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Understanding</p>
-              <p className="text-sm text-stone-700">This is not about measuring progress or judging yourself. It is about learning to trust God in your weakness and returning again and again to His presence.</p>
+            <div>
+              <h3 className="font-semibold mb-2">Journaling Examples</h3>
+              <ul className="list-disc pl-5 text-sm space-y-1">
+                <li>I got frustrated in slow traffic. Not trusting God for His timing and rather complaining.</li>
+                <li>I asked for grace to be around a difficult person at work and was able to maintain a loving attitude towards them.</li>
+              </ul>
             </div>
 
-            <button
-              onClick={() => switchTab(3)}
+            <p className="italic text-sm">The point is not worrying about how well you did but accepting whatever happens, acknowledging that apart from God you can do nothing. Then, choose to be in God’s presence and trust Him to change you. Acknowledging your weakness so His strength will come.</p>
+
+            <p className="text-sm">The process of learning to live in God’s presence is not about measuring progress nor about condemning yourself. It is a process of discovering how to trust God in the midst of our weaknesses.</p>
+          </div>
+        )}
               className="w-full bg-stone-800 text-white rounded-2xl py-3 shadow-md"
             >
               Begin Prayer Time
