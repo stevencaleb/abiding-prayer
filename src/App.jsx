@@ -148,7 +148,7 @@ function getReminderMessage() {
     'Release control and rest in God’s care.',
     'Speak to God now, simply and honestly.',
     'Let your heart turn toward Him again.',
-    'Be still and know He is with you.'
+    'Be still and know He is with you.',
   ];
   return messages[Math.floor(Math.random() * messages.length)];
 }
@@ -367,7 +367,7 @@ export default function JournalingApp() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-50 via-stone-100 to-white p-4">
       <div className="max-w-md mx-auto space-y-6 pb-24">
-        <div className="bg-stone-900 text-amber-50 rounded-3xl p-5 shadow-2xl border border-stone-700 space-y-4 animate-in fade-in duration-500">
+        <div className="bg-stone-900 text-amber-50 rounded-3xl p-5 shadow-2xl border border-stone-700 space-y-4">
           <div className="space-y-2">
             <BrandBadge>Fountains of Life</BrandBadge>
             <div>
@@ -391,7 +391,7 @@ export default function JournalingApp() {
         </div>
 
         {activeTab === 'home' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
+          <div className="space-y-4">
             <div className="bg-white/85 backdrop-blur rounded-3xl border border-stone-200 p-5 shadow-sm space-y-3">
               <BrandBadge>Practice the Presence</BrandBadge>
               <p className="text-xs uppercase tracking-[0.2em] text-stone-400">How to Practice</p>
@@ -416,7 +416,7 @@ export default function JournalingApp() {
         )}
 
         {activeTab === 'instructions' && (
-          <div className="bg-amber-50 border border-amber-100 rounded-3xl p-5 shadow-sm text-stone-700 space-y-4 animate-in fade-in duration-500">
+          <div className="bg-amber-50 border border-amber-100 rounded-3xl p-5 shadow-sm text-stone-700 space-y-4">
             <BrandBadge>Instructions</BrandBadge>
             <h2 className="text-xl font-serif font-semibold text-stone-800">Instructions Page</h2>
 
@@ -453,15 +453,9 @@ export default function JournalingApp() {
             <p className="text-sm">The process of learning to live in God’s presence is not about measuring progress nor about condemning yourself. It is a process of discovering how to trust God in the midst of our weaknesses.</p>
           </div>
         )}
-              className="w-full bg-stone-800 text-white rounded-2xl py-3 shadow-md"
-            >
-              Begin Prayer Time
-            </button>
-          </div>
-        )}
 
         {activeTab === 'journal' && (
-          <div className="bg-white/92 backdrop-blur rounded-3xl shadow-2xl p-6 space-y-4 border border-stone-200 animate-in fade-in duration-500">
+          <div className="bg-white/92 backdrop-blur rounded-3xl shadow-2xl p-6 space-y-4 border border-stone-200">
             <div className="text-center space-y-1">
               <BrandBadge>Daily Reflection</BrandBadge>
               <h2 className="text-3xl font-serif text-stone-800">Abiding Prayer</h2>
@@ -514,7 +508,7 @@ export default function JournalingApp() {
         )}
 
         {activeTab === 'meditation' && (
-          <div className="bg-white border border-stone-200 rounded-3xl p-6 space-y-5 shadow-xl animate-in fade-in duration-500 text-center">
+          <div className="bg-white border border-stone-200 rounded-3xl p-6 space-y-5 shadow-xl text-center">
             <BrandBadge>Meditation Prayer</BrandBadge>
             <h2 className="font-serif text-2xl text-stone-800">Meditation Prayer Timer</h2>
             <p className="text-stone-600">Set a time to become still before God. The timer begins and ends with a church bell.</p>
@@ -558,7 +552,7 @@ export default function JournalingApp() {
         )}
 
         {activeTab === 'progress' && (
-          <div className="space-y-4 animate-in fade-in duration-500">
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-3xl bg-white border border-stone-200 p-5 shadow-sm text-center">
                 <p className="text-xs uppercase tracking-[0.2em] text-stone-400">Streak</p>
@@ -583,7 +577,7 @@ export default function JournalingApp() {
         )}
 
         {activeTab === 'donate' && (
-          <div className="bg-white border border-stone-200 rounded-3xl p-6 space-y-4 shadow-xl animate-in fade-in duration-500 text-center">
+          <div className="bg-white border border-stone-200 rounded-3xl p-6 space-y-4 shadow-xl text-center">
             <BrandBadge>Support the Mission</BrandBadge>
             <h2 className="font-serif text-2xl text-stone-800">Partner With Fountains of Life</h2>
             <p className="text-stone-600">Support this ministry and the ongoing work of sharing prayer, spiritual formation, and mission outreach.</p>
@@ -600,7 +594,7 @@ export default function JournalingApp() {
         )}
 
         {activeTab === 'settings' && (
-          <div className="bg-white border border-stone-200 rounded-3xl p-6 space-y-4 shadow-xl animate-in fade-in duration-500">
+          <div className="bg-white border border-stone-200 rounded-3xl p-6 space-y-4 shadow-xl">
             <h2 className="font-serif text-xl text-stone-800">Settings</h2>
             <div className="rounded-2xl border border-stone-200 px-4 py-3 space-y-2">
               <div className="flex justify-between items-center">
