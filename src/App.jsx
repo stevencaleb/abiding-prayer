@@ -5,9 +5,18 @@ const SETTINGS_KEY = 'abiding_prayer_settings_v5';
 const DONATE_URL = 'https://www.fountainsoflife.org/donate/';
 const BELL_URL = 'https://actions.google.com/sounds/v1/alarms/church_bells.ogg';
 
+// FIX 1: Use local date consistently to avoid UTC timezone mismatch
+// toISOString() returns UTC, which can show the wrong date for users west of UTC.
 function getToday() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
+
+// FIX 3: Move tabs array outside component so it is never re-created on render.
+const TABS = ['home', 'instructions', 'journal', 'meditation', 'progress', 'donate', 'settings'];
 
 function triggerHaptic() {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -16,18 +25,29 @@ function triggerHaptic() {
 }
 
 function playBell() {
-  const audio = new Audio(BELL_URL);
-  audio.play().catch(() => {});
+  // Keep the existing URL but swallow all errors gracefully
+  try {
+    const audio = new Audio(BELL_URL);
+    audio.play().catch(() => {});
+  } catch {
+    // Audio not supported — fail silently
+  }
 }
 
+// FIX 1 (continued): calcStreak uses the same local-date helper so dates always match.
 function calcStreak(entries) {
   const uniqueDays = [...new Set(entries.map((e) => e.date))].sort().reverse();
   let streak = 0;
   const cursor = new Date();
 
   while (true) {
-    const day = cursor.toISOString().slice(0, 10);
-    if (uniqueDays.includes(day)) {
+    const d = cursor;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
+
+    if (uniqueDays.includes(dateStr)) {
       streak += 1;
       cursor.setDate(cursor.getDate() - 1);
     } else {
@@ -139,13 +159,13 @@ function installMessage(isStandalone) {
 
 function getReminderMessage() {
   const messages = [
-    'Prayer Break — pause and turn your attention to God’s presence.',
+    'Prayer Break — pause and turn your attention to God\'s presence.',
     'Pause and worship God quietly within. He is near.',
     'Return gently to God. Let go and trust Him in this moment.',
     'Ask for grace right now — He is with you.',
-    'Turn inward and enjoy God’s presence in secret.',
+    'Turn inward and enjoy God\'s presence in secret.',
     'Give thanks here, even in this moment.',
-    'Release control and rest in God’s care.',
+    'Release control and rest in God\'s care.',
     'Speak to God now, simply and honestly.',
     'Let your heart turn toward Him again.',
     'Be still and know He is with you.',
@@ -157,6 +177,12 @@ function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function sendNotification() {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('Abiding Prayer', { body: getReminderMessage() });
+  }
 }
 
 function BrandBadge({ children }) {
@@ -185,8 +211,12 @@ function TabButton({ active, icon, label, onClick }) {
 export default function JournalingApp() {
   const [entries, setEntries] = useState([]);
   const [text, setText] = useState('');
-  const [activeTab, setActiveTab] = useState('home');
-  const [tabIndex, setTabIndex] = useState(0);
+
+  // FIX 5: Single source of truth for tab state — derive activeTab from index,
+  // eliminating the dual-state sync that was error-prone.
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const activeTab = TABS[activeTabIndex];
+
   const [thanks, setThanks] = useState(false);
   const [guarded, setGuarded] = useState(false);
   const [prayed, setPrayed] = useState(false);
@@ -200,18 +230,14 @@ export default function JournalingApp() {
   const idleTimer = useRef(null);
   const randomTimer = useRef(null);
   const meditationInterval = useRef(null);
-  const tabs = ['home', 'instructions', 'journal', 'meditation', 'progress', 'donate', 'settings'];
 
   useEffect(() => {
     const savedEntries = localStorage.getItem(STORAGE_KEY);
     const savedSettings = localStorage.getItem(SETTINGS_KEY);
 
     if (savedEntries) {
-      try {
-        setEntries(JSON.parse(savedEntries));
-      } catch {}
+      try { setEntries(JSON.parse(savedEntries)); } catch {}
     }
-
     if (savedSettings) {
       try {
         const parsed = JSON.parse(savedSettings);
@@ -231,40 +257,38 @@ export default function JournalingApp() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify({ notificationsEnabled }));
   }, [notificationsEnabled]);
 
-  useEffect(() => {
-    if ('Notification' in window && notificationsEnabled && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, [notificationsEnabled]);
-
+  // FIX 7: Request permission first, then schedule — avoids the race condition
+  // where scheduleRandom() ran before permission was granted.
   useEffect(() => {
     if (!notificationsEnabled) return;
+    if (!('Notification' in window)) return;
 
     function scheduleRandom() {
       randomTimer.current = setTimeout(() => {
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('Abiding Prayer', {
-            body: getReminderMessage(),
-          });
-        }
+        sendNotification();
         scheduleRandom();
       }, randomMs(45, 120));
     }
 
-    scheduleRandom();
+    if (Notification.permission === 'granted') {
+      scheduleRandom();
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission().then((permission) => {
+        if (permission === 'granted') scheduleRandom();
+      }).catch(() => {});
+    }
+
     return () => clearTimeout(randomTimer.current);
   }, [notificationsEnabled]);
 
+  // FIX 4: Idle timer — bail out early when notifications are disabled,
+  // so event listeners are never attached unnecessarily.
   useEffect(() => {
+    if (!notificationsEnabled) return;
+
     function resetIdle() {
       clearTimeout(idleTimer.current);
-      idleTimer.current = setTimeout(() => {
-        if (notificationsEnabled && 'Notification' in window && Notification.permission === 'granted') {
-          new Notification('Abiding Prayer', {
-            body: getReminderMessage(),
-          });
-        }
-      }, 20 * 60 * 1000);
+      idleTimer.current = setTimeout(sendNotification, 20 * 60 * 1000);
     }
 
     window.addEventListener('mousemove', resetIdle);
@@ -326,8 +350,9 @@ export default function JournalingApp() {
     setPrayed(false);
     setGrace(false);
     triggerHaptic();
-    setActiveTab('progress');
-    setTabIndex(4);
+
+    // FIX 2: Derive the progress tab index from the TABS array instead of hardcoding 4.
+    setActiveTabIndex(TABS.indexOf('progress'));
   };
 
   const deleteEntry = (id) => {
@@ -335,10 +360,8 @@ export default function JournalingApp() {
     triggerHaptic();
   };
 
-  const switchTab = (index) => {
-    setTabIndex(index);
-    setActiveTab(tabs[index]);
-  };
+  // FIX 5 (continued): Single switchTab function using activeTabIndex only.
+  const switchTab = (index) => setActiveTabIndex(index);
 
   const startMeditation = () => {
     setRemainingSeconds(meditationMinutes * 60);
@@ -347,9 +370,7 @@ export default function JournalingApp() {
     setTimerRunning(true);
   };
 
-  const pauseMeditation = () => {
-    setTimerRunning(false);
-  };
+  const pauseMeditation = () => setTimerRunning(false);
 
   const resetMeditation = () => {
     clearInterval(meditationInterval.current);
@@ -375,9 +396,9 @@ export default function JournalingApp() {
               <p className="text-sm text-amber-100 italic">That I May Know Him</p>
             </div>
           </div>
-          <p className="text-sm text-stone-200">A contemplative ministry companion for prayer, surrender, and steady awareness of God’s presence.</p>
+          <p className="text-sm text-stone-200">A contemplative ministry companion for prayer, surrender, and steady awareness of God's presence.</p>
           <div className="bg-white/10 rounded-2xl p-4 text-sm space-y-2">
-            <p><strong>Goal:</strong> Learning to live continuously in God’s presence and trusting God instead of controlling outcomes.</p>
+            <p><strong>Goal:</strong> Learning to live continuously in God's presence and trusting God instead of controlling outcomes.</p>
             <p>{installText}</p>
           </div>
           <a
@@ -420,21 +441,21 @@ export default function JournalingApp() {
             <BrandBadge>Instructions</BrandBadge>
             <h2 className="text-xl font-serif font-semibold text-stone-800">Instructions Page</h2>
 
-            <p><strong>Goal:</strong> Learning to live continuously in God’s presence. Growing ever deeper in letting go of trying to control outcomes and trusting God instead.</p>
+            <p><strong>Goal:</strong> Learning to live continuously in God's presence. Growing ever deeper in letting go of trying to control outcomes and trusting God instead.</p>
 
             <p>We focus on two types of prayer:</p>
             <ol className="list-decimal pl-5 text-sm space-y-1">
-              <li>Sitting in God’s presence. Say some words of love, praise, thanksgiving… and then be still and wait in His presence. When you start to lose focus, say some more words of love to God.</li>
-              <li>Prayer without ceasing. This is seeking to maintain awareness of God’s presence all day long.</li>
+              <li>Sitting in God's presence. Say some words of love, praise, thanksgiving… and then be still and wait in His presence. When you start to lose focus, say some more words of love to God.</li>
+              <li>Prayer without ceasing. This is seeking to maintain awareness of God's presence all day long.</li>
             </ol>
 
-            <p>Here is a quick reference of the steps for Abiding Prayer. You can use these to help with your journaling for discovering where you still need to grow. Practicing daily will build the habit of living in God’s presence.</p>
+            <p>Here is a quick reference of the steps for Abiding Prayer. You can use these to help with your journaling for discovering where you still need to grow. Practicing daily will build the habit of living in God's presence.</p>
 
             <div>
               <h3 className="font-semibold mb-2">Expressions of Faith</h3>
               <ul className="list-disc pl-5 space-y-1 text-sm">
                 <li>Giving God thanks in everything. Not that He authors bad things but that He is bigger and able to help and work all for good.</li>
-                <li>Guard your soul according to God’s desires. Seek to avoid dwelling on negative things, not judging others, nor obsessing over figuring things out. Rather constantly choosing God’s presence and praising Him.</li>
+                <li>Guard your soul according to God's desires. Seek to avoid dwelling on negative things, not judging others, nor obsessing over figuring things out. Rather constantly choosing God's presence and praising Him.</li>
                 <li>Talking to God all day long, seeking to stay in conscious contact with Him.</li>
                 <li>Asking God for grace for every task.</li>
               </ul>
@@ -448,9 +469,9 @@ export default function JournalingApp() {
               </ul>
             </div>
 
-            <p className="italic text-sm">The point is not worrying about how well you did but accepting whatever happens, acknowledging that apart from God you can do nothing. Then, choose to be in God’s presence and trust Him to change you. Acknowledging your weakness so His strength will come.</p>
+            <p className="italic text-sm">The point is not worrying about how well you did but accepting whatever happens, acknowledging that apart from God you can do nothing. Then, choose to be in God's presence and trust Him to change you. Acknowledging your weakness so His strength will come.</p>
 
-            <p className="text-sm">The process of learning to live in God’s presence is not about measuring progress nor about condemning yourself. It is a process of discovering how to trust God in the midst of our weaknesses.</p>
+            <p className="text-sm">The process of learning to live in God's presence is not about measuring progress nor about condemning yourself. It is a process of discovering how to trust God in the midst of our weaknesses.</p>
           </div>
         )}
 
@@ -609,15 +630,19 @@ export default function JournalingApp() {
           </div>
         )}
 
+        {/* FIX 5 (continued): Tab bar uses activeTabIndex throughout — no dual state. */}
         <div className="sticky bottom-3 max-w-md mx-auto bg-white/95 backdrop-blur border border-stone-200 rounded-3xl shadow-lg px-1 py-2 flex justify-around overflow-hidden">
-          <div className="absolute top-2 bottom-2 rounded-2xl bg-stone-800 transition-all duration-300" style={{ left: `${tabIndex * (100 / 7)}%`, width: `${100 / 7}%` }} />
-          <TabButton active={activeTab === 'home'} icon="🏠" label="Home" onClick={() => switchTab(0)} />
-          <TabButton active={activeTab === 'instructions'} icon="🕊️" label="Guide" onClick={() => switchTab(1)} />
-          <TabButton active={activeTab === 'journal'} icon="📖" label="Journal" onClick={() => switchTab(2)} />
-          <TabButton active={activeTab === 'meditation'} icon="⏳" label="Prayer" onClick={() => switchTab(3)} />
-          <TabButton active={activeTab === 'progress'} icon="📈" label="Progress" onClick={() => switchTab(4)} />
-          <TabButton active={activeTab === 'donate'} icon="🤍" label="Donate" onClick={() => switchTab(5)} />
-          <TabButton active={activeTab === 'settings'} icon="⚙️" label="Settings" onClick={() => switchTab(6)} />
+          <div
+            className="absolute top-2 bottom-2 rounded-2xl bg-stone-800 transition-all duration-300"
+            style={{ left: `${activeTabIndex * (100 / TABS.length)}%`, width: `${100 / TABS.length}%` }}
+          />
+          <TabButton active={activeTab === 'home'}         icon="🏠" label="Home"     onClick={() => switchTab(0)} />
+          <TabButton active={activeTab === 'instructions'} icon="🕊️" label="Guide"    onClick={() => switchTab(1)} />
+          <TabButton active={activeTab === 'journal'}      icon="📖" label="Journal"  onClick={() => switchTab(2)} />
+          <TabButton active={activeTab === 'meditation'}   icon="⏳" label="Prayer"   onClick={() => switchTab(3)} />
+          <TabButton active={activeTab === 'progress'}     icon="📈" label="Progress" onClick={() => switchTab(4)} />
+          <TabButton active={activeTab === 'donate'}       icon="🤍" label="Donate"   onClick={() => switchTab(5)} />
+          <TabButton active={activeTab === 'settings'}     icon="⚙️" label="Settings" onClick={() => switchTab(6)} />
         </div>
       </div>
     </div>
