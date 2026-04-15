@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 const STORAGE_KEY = 'abiding_prayer_ministry_v5';
 const SETTINGS_KEY = 'abiding_prayer_settings_v5';
 const DONATE_URL = 'https://www.fountainsoflife.org/donate/';
-const BELL_URL = 'https://actions.google.com/sounds/v1/alarms/church_bells.ogg';
+
 
 // FIX 1: Use local date consistently to avoid UTC timezone mismatch
 // toISOString() returns UTC, which can show the wrong date for users west of UTC.
@@ -25,10 +25,29 @@ function triggerHaptic() {
 }
 
 function playBell() {
-  // Keep the existing URL but swallow all errors gracefully
   try {
-    const audio = new Audio(BELL_URL);
-    audio.play().catch(() => {});
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Bell uses two oscillators layered for a richer tone
+    const frequencies = [523.25, 659.25]; // C5 + E5
+
+    frequencies.forEach((freq) => {
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(freq, ctx.currentTime);
+
+      // Start loud, decay naturally like a bell
+      gainNode.gain.setValueAtTime(0.4, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 3);
+
+      oscillator.start(ctx.currentTime);
+      oscillator.stop(ctx.currentTime + 3);
+    });
   } catch {
     // Audio not supported — fail silently
   }
@@ -153,7 +172,7 @@ function installMessage(isStandalone) {
   if (isStandalone) return 'Installed on your device.';
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
   const isIPhone = /iPhone|iPad|iPod/i.test(ua);
-  if (isIPhone) return 'To install on iPhone: tap Share, then Add to Home Screen.';
+  if (isIPhone) return '';
   return 'Install this app from your browser menu or the install button when available.';
 }
 
@@ -490,11 +509,13 @@ export default function JournalingApp() {
               placeholder="What happened today, and where is God inviting trust?"
             />
 
+            <p className="text-sm text-stone-500 mt-1">Consider these four steps as you journal</p>
+
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <label className="rounded-xl px-3 py-2 border border-stone-200 flex items-center gap-2 bg-stone-50"><input type="checkbox" checked={thanks} onChange={() => setThanks(!thanks)} /> Gave thanks</label>
-              <label className="rounded-xl px-3 py-2 border border-stone-200 flex items-center gap-2 bg-stone-50"><input type="checkbox" checked={guarded} onChange={() => setGuarded(!guarded)} /> Guarded soul</label>
-              <label className="rounded-xl px-3 py-2 border border-stone-200 flex items-center gap-2 bg-stone-50"><input type="checkbox" checked={prayed} onChange={() => setPrayed(!prayed)} /> Talked to God</label>
-              <label className="rounded-xl px-3 py-2 border border-stone-200 flex items-center gap-2 bg-stone-50"><input type="checkbox" checked={grace} onChange={() => setGrace(!grace)} /> Asked for grace</label>
+              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Gave thanks</div>
+              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Guarded soul</div>
+              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Talked to God</div>
+              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Asked for grace</div>
             </div>
 
             <button onClick={addEntry} className="w-full bg-stone-800 text-white rounded-2xl py-3 shadow-md active:scale-[0.98] transition-all duration-200">
