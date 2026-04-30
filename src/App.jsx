@@ -24,11 +24,24 @@ function triggerHaptic() {
   }
 }
 
+// Shared AudioContext — must be created on a user gesture (button tap) to work on iOS.
+// We create it once on Begin and reuse it for the end-of-timer bell.
+let sharedAudioCtx = null;
+
+function getAudioCtx() {
+  if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+    sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // Resume in case it was suspended (iOS suspends on background)
+  if (sharedAudioCtx.state === 'suspended') {
+    sharedAudioCtx.resume().catch(() => {});
+  }
+  return sharedAudioCtx;
+}
+
 function playBell() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-    // Bell uses two oscillators layered for a richer tone
+    const ctx = getAudioCtx();
     const frequencies = [523.25, 659.25]; // C5 + E5
 
     frequencies.forEach((freq) => {
@@ -41,7 +54,6 @@ function playBell() {
       oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(freq, ctx.currentTime);
 
-      // Start loud, decay naturally like a bell
       gainNode.gain.setValueAtTime(0.4, ctx.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 3);
 
@@ -60,10 +72,9 @@ function calcStreak(entries) {
   const cursor = new Date();
 
   while (true) {
-    const d = cursor;
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
+    const year = cursor.getFullYear();
+    const month = String(cursor.getMonth() + 1).padStart(2, '0');
+    const day = String(cursor.getDate()).padStart(2, '0');
     const dateStr = `${year}-${month}-${day}`;
 
     if (uniqueDays.includes(dateStr)) {
@@ -93,79 +104,356 @@ function averageScore(entries) {
   return Math.round(entries.reduce((sum, entry) => sum + practiceScore(entry), 0) / entries.length);
 }
 
-function detectThemes(entries) {
-  const joined = entries.map((e) => e.text.toLowerCase()).join(' ');
-  return {
-    anxiety: (joined.match(/anx|worry|fear|afraid|stress|overwhelm/g) || []).length,
-    control: (joined.match(/control|fix|figure out|manage|force/g) || []).length,
-    gratitude: (joined.match(/thank|grateful|gratitude|praise/g) || []).length,
-    grace: (joined.match(/grace|help me|strength|mercy/g) || []).length,
-    conflict: (joined.match(/frustrat|angry|irritat|difficult|complain/g) || []).length,
-  };
+// ============================================================
+// Reflection feedback engine — rule-based, deterministic.
+// Templates are picked by a stable hash of today's date so the
+// same day shows the same message but different days vary.
+// All output is grounded in real counts and trends.
+// ============================================================
+
+const THEME_DEFINITIONS = [
+  { key: 'anxiety',   pattern: /\b(anx\w*|worri\w*|worry|fear\w*|afraid|scared|stress\w*|overwhelm\w*|panic|nervous|dread|restless)\b/gi },
+  { key: 'control',   pattern: /\b(control\w*|fix|figure (?:it|this|that) out|manage|forc\w*|grip|micromanag\w*)\b/gi },
+  { key: 'gratitude', pattern: /\b(thank\w*|grateful|gratitude|praise|bless\w*|appreciat\w*|rejoic\w*)\b/gi },
+  { key: 'grace',     pattern: /\b(grace|mercy|weak\w*|surrender\w*|depend\w*|trust|help me)\b/gi },
+  { key: 'conflict',  pattern: /\b(frustrat\w*|angry|anger|irritat\w*|annoy\w*|complain\w*|resent\w*|bitter|hurt|offend\w*|argu\w*)\b/gi },
+  { key: 'fatigue',   pattern: /\b(tired|exhaust\w*|weary|drain\w*|burn(?:ed)? out|fatigu\w*|spent|depleted)\b/gi },
+  { key: 'presence',  pattern: /\b(presence|still\w*|silent\w*|silence|quiet|abide|abiding|listen\w*)\b/gi },
+  { key: 'distract',  pattern: /\b(distract\w*|scatter\w*|busy|rush\w*|hurry|noise|forgot|forget)\b/gi },
+  { key: 'doubt',     pattern: /\b(doubt\w*|question\w*|why does|where is god|unsure|confus\w*)\b/gi },
+  { key: 'hope',      pattern: /\b(hope\w*|expect\w*|anticipat\w*|looking forward|promise\w*)\b/gi },
+];
+
+const THEME_LABELS = {
+  anxiety:   'anxiety or fear',
+  control:   'trying to manage outcomes',
+  gratitude: 'gratitude',
+  grace:     'awareness of need and grace',
+  conflict:  'frustration or relational strain',
+  fatigue:   'tiredness',
+  presence:  "attention to God's presence",
+  distract:  'distraction or hurry',
+  doubt:     'questioning or doubt',
+  hope:      'hope and expectation',
+};
+
+const PRACTICE_LABELS = {
+  thanks:  'thanksgiving in everything',
+  grace:   'asking for grace',
+  prayed:  'communicating with God through the day',
+  guarded: 'keeping your soul',
+};
+
+function countThemes(entries) {
+  const text = entries.map((e) => e.text).join(' ');
+  const counts = {};
+  for (const { key, pattern } of THEME_DEFINITIONS) {
+    counts[key] = (text.match(pattern) || []).length;
+  }
+  return counts;
 }
+
+function topThemes(counts, n = 2) {
+  return Object.entries(counts)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k]) => k);
+}
+
+// FNV-1a hash of today's local date — stable per day, varies day-to-day.
+function dailySeed() {
+  const t = getToday();
+  let h = 2166136261;
+  for (let i = 0; i < t.length; i++) {
+    h ^= t.charCodeAt(i);
+    h = (h * 16777619) >>> 0;
+  }
+  return h;
+}
+
+function pickFrom(arr, seed) {
+  return arr[seed % arr.length];
+}
+
+function parseLocalDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+// Split entries into the most recent `windowDays` and the prior window of equal size.
+function partitionByWindow(entries, windowDays = 7) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const innerStart = new Date(today);  innerStart.setDate(innerStart.getDate() - windowDays + 1);
+  const outerStart = new Date(today);  outerStart.setDate(outerStart.getDate() - 2 * windowDays + 1);
+  const thisWindow = [], priorWindow = [];
+  for (const e of entries) {
+    const d = parseLocalDate(e.date);
+    if (d >= innerStart) thisWindow.push(e);
+    else if (d >= outerStart) priorWindow.push(e);
+  }
+  return { thisWindow, priorWindow };
+}
+
+// Days between today's most recent entry and the day before it (only if today has an entry).
+function priorGapDays(entries) {
+  const days = [...new Set(entries.map((e) => e.date))].sort().reverse();
+  if (days.length < 2 || days[0] !== getToday()) return null;
+  return Math.round((parseLocalDate(days[0]) - parseLocalDate(days[1])) / 86400000);
+}
+
+const ENCOURAGEMENT_HIGH = [
+  'There is a beautiful rhythm forming. Stay soft, grateful, and dependent.',
+  'A real cadence is here. Hold it with open hands.',
+  'Consistency is shaping you. Receive it as gift, not achievement.',
+  'The practice is settling in. Let it be quiet, not striving.',
+];
+
+const ENCOURAGEMENT_MID = [
+  'There is real movement here. Let consistency matter more than intensity.',
+  'You are showing up. That is most of the work.',
+  'The shape of the practice is taking hold. Keep going gently.',
+  'Steady is better than perfect. Stay with it.',
+];
+
+const ENCOURAGEMENT_LOW = [
+  'Keep returning without self-judgment.',
+  'Begin again, simply. That is the practice.',
+  'Small returns are still returns. Tomorrow, one honest sentence is enough.',
+  'There is no failing here — only beginning again.',
+];
+
+const RETURN_AFTER_BREAK = [
+  'You returned after a pause. Returning is the practice.',
+  'A break, then a return — that cycle is the path itself.',
+  'You came back. That counts more than the gap.',
+];
+
+const FIRST_ENTRY = [
+  'Begin with one honest reflection. Abiding grows through simple returning, not pressure.',
+  'A single entry is a real beginning. There is no minimum here.',
+  'Start with what is actually true today, however small.',
+];
 
 function reflectionSummary(entries) {
-  if (!entries.length) {
-    return 'Begin with one honest reflection. Abiding grows through simple returning, not pressure.';
-  }
+  const seed = dailySeed();
+  if (!entries.length) return pickFrom(FIRST_ENTRY, seed);
 
   const recent = entries.slice(0, 14);
-  const themes = detectThemes(recent);
+  const counts = countThemes(recent);
+  const top = topThemes(counts, 2);
   const avg = averageScore(recent);
-  const strongest = Object.entries(themes).sort((a, b) => b[1] - a[1])[0];
 
-  let themeSentence = 'Your recent reflections show a quiet, steady beginning.';
-  if (strongest && strongest[1] > 0) {
-    const map = {
-      anxiety: 'A repeated theme of anxiety or fear appears in recent reflections.',
-      control: 'A repeated theme of trying to manage or control outcomes appears in recent reflections.',
-      gratitude: 'Gratitude is becoming a noticeable thread in your recent reflections.',
-      grace: 'There is a growing awareness of need and grace in your recent reflections.',
-      conflict: 'Relational strain or frustration appears to be an area where God may be inviting deeper surrender.',
-    };
-    themeSentence = map[strongest[0]];
+  // Theme sentence — surface up to two threads.
+  let themeSentence;
+  if (top.length === 0) {
+    themeSentence = 'Your recent reflections show a quiet, steady tone.';
+  } else if (top.length === 1) {
+    themeSentence = `A repeated theme of ${THEME_LABELS[top[0]]} appears in your recent reflections.`;
+  } else {
+    themeSentence = `Two threads stand out recently: ${THEME_LABELS[top[0]]} and ${THEME_LABELS[top[1]]}.`;
   }
 
-  let encouragement = 'Keep returning without self-judgment.';
-  if (avg >= 75) encouragement = 'There is a beautiful rhythm forming. Stay soft, grateful, and dependent.';
-  else if (avg >= 50) encouragement = 'There is real movement here. Let consistency matter more than intensity.';
+  // Trend sentence — compare top theme this week vs last.
+  const { thisWindow, priorWindow } = partitionByWindow(entries, 7);
+  let trendSentence = '';
+  if (top[0] && thisWindow.length >= 2 && priorWindow.length >= 2) {
+    const a = countThemes(thisWindow)[top[0]];
+    const b = countThemes(priorWindow)[top[0]];
+    if (b > 0 && a < b) trendSentence = ' It appears less often this week than last — a small easing.';
+    else if (a > b * 1.5 + 1) trendSentence = ' It has grown this week — worth noticing without judgment.';
+  }
 
-  return `${themeSentence} ${encouragement}`;
+  // Comeback prefix — different tone when returning after a 3+ day pause.
+  const gap = priorGapDays(entries);
+  const prefix = gap !== null && gap >= 3 ? `${pickFrom(RETURN_AFTER_BREAK, seed)} ` : '';
+
+  // Encouragement pool by score.
+  const pool = avg >= 75 ? ENCOURAGEMENT_HIGH : avg >= 50 ? ENCOURAGEMENT_MID : ENCOURAGEMENT_LOW;
+  return `${prefix}${themeSentence}${trendSentence} ${pickFrom(pool, seed)}`;
 }
 
+const PRACTICE_PROMPTS = {
+  thanks: [
+    'Where can you thank God today without denying difficulty?',
+    'What is one ordinary thing you can name with gratitude this morning?',
+    'What good thing today might pass unnoticed if you do not pause to thank Him?',
+    'Try ending the day naming three small mercies, even if the day was hard.',
+  ],
+  guarded: [
+    'What thought pattern needs to be released instead of rehearsed?',
+    'What conversation are you replaying that you can hand over today?',
+    'Where is your mind drifting that does not need your attention?',
+    'What worry is taking up space that could be given back to God?',
+  ],
+  prayed: [
+    'What would it look like to speak to God in the middle of ordinary tasks today?',
+    'Try a one-sentence prayer between tasks today, without leaving where you are.',
+    'When you feel the next pull of stress, turn it into a sentence to God.',
+    'What part of today have you not yet talked to Him about?',
+  ],
+  grace: [
+    'What task or relationship right now needs grace rather than striving?',
+    'Where are you working in your own strength when you could ask for His?',
+    'Name one thing today where you will deliberately ask for grace before starting.',
+    'Where is weakness inviting dependence rather than effort?',
+  ],
+};
+
+const THEME_INVITATIONS = {
+  anxiety: [
+    'Anxiety appears often in your reflections. What single fear could you name to God today rather than carry?',
+    'When fear rises today, try one breath and one sentence: "I trust You with this."',
+    'What is one worry you could write down and deliberately leave on the page?',
+  ],
+  control: [
+    'You write often about managing or fixing. What outcome could you deliberately leave with Him today?',
+    'Try naming one situation today and saying: "This is not mine to hold."',
+    'Where could you let something be unresolved without rushing to solve it?',
+  ],
+  conflict: [
+    'Frustration appears repeatedly. Who could you pray for today rather than rehearse against?',
+    'Where could grace replace the next reaction?',
+    'What story are you carrying about someone that could be set down today?',
+  ],
+  fatigue: [
+    'Tiredness shows up often. What rest could you receive as gift rather than earn?',
+    'Where is exhaustion inviting honesty rather than more effort?',
+    'What is one expectation you could let go of today?',
+  ],
+  distract: [
+    'Hurry appears often. What is one small place today you could move slower than required?',
+    'When you notice yourself rushing, that is the bell — return to Him there.',
+    'What is one transition today you could walk through prayerfully instead of mentally elsewhere?',
+  ],
+};
+
 function nextInvitation(entries) {
-  if (!entries.length) return 'Ask God for grace for the next small thing in front of you.';
+  const seed = dailySeed();
+
+  if (!entries.length) {
+    return pickFrom([
+      'Ask God for grace for the next small thing in front of you.',
+      'Begin with one honest sentence about today and one short prayer.',
+      'Name one mercy in the past hour and let that be enough to start.',
+    ], seed);
+  }
 
   const recent = entries.slice(0, 10);
-  const thanksCount = recent.filter((e) => e.thanks).length;
-  const guardedCount = recent.filter((e) => e.guarded).length;
-  const prayedCount = recent.filter((e) => e.prayed).length;
-  const graceCount = recent.filter((e) => e.grace).length;
+  const counts = countThemes(recent);
+  const top = topThemes(counts, 1)[0];
 
-  const lowest = [
-    { label: 'giving thanks in everything', value: thanksCount, prompt: 'Where can you thank God today without denying difficulty?' },
-    { label: 'guarding your soul', value: guardedCount, prompt: 'What thought pattern needs to be released instead of rehearsed?' },
-    { label: 'talking to God through the day', value: prayedCount, prompt: 'What would it look like to speak to God in the middle of ordinary tasks today?' },
-    { label: 'asking for grace', value: graceCount, prompt: 'What task or relationship right now needs grace rather than striving?' },
-  ].sort((a, b) => a.value - b.value)[0];
+  // Theme override when a theme is strong (3+ matches in last 10 entries).
+  if (top && THEME_INVITATIONS[top] && counts[top] >= 3) {
+    return pickFrom(THEME_INVITATIONS[top], seed);
+  }
 
-  return `Your next gentle invitation may be ${lowest.label}. ${lowest.prompt}`;
+  // Otherwise: surface the practice that's been checked least often.
+  const totals = {
+    thanks:  recent.filter((e) => e.thanks).length,
+    grace:   recent.filter((e) => e.grace).length,
+    prayed:  recent.filter((e) => e.prayed).length,
+    guarded: recent.filter((e) => e.guarded).length,
+  };
+  const lowest = Object.entries(totals).sort((a, b) => a[1] - b[1])[0][0];
+  return `Your next gentle invitation may be ${PRACTICE_LABELS[lowest]}. ${pickFrom(PRACTICE_PROMPTS[lowest], seed)}`;
 }
 
 function weeklyNarrative(entries) {
-  const recent = entries.slice(0, 7);
-  if (!recent.length) return 'Your weekly reflection will appear here after a few entries.';
+  if (!entries.length) return 'Your weekly reflection will appear here after a few entries.';
 
-  const avg = averageScore(recent);
-  const days = [...new Set(recent.map((e) => e.date))].length;
+  const { thisWindow, priorWindow } = partitionByWindow(entries, 7);
+  if (!thisWindow.length) {
+    return 'No entries in the last seven days. The next return is the next entry — no need to make up for the gap.';
+  }
 
-  if (avg >= 75) {
-    return `This week shows a growing rhythm of abiding across ${days} day${days === 1 ? '' : 's'}. There is evidence of gratitude, dependence, and return.`;
+  const days = new Set(thisWindow.map((e) => e.date)).size;
+  const count = thisWindow.length;
+  const avg = averageScore(thisWindow);
+  const priorAvg = priorWindow.length ? averageScore(priorWindow) : null;
+
+  const parts = [];
+  parts.push(`Over the last 7 days you wrote ${count} ${count === 1 ? 'entry' : 'entries'} across ${days} ${days === 1 ? 'day' : 'days'}, averaging ${avg}%.`);
+
+  if (priorAvg !== null) {
+    const delta = avg - priorAvg;
+    if (delta >= 10) parts.push(`That is up from ${priorAvg}% the week before — a real lift.`);
+    else if (delta <= -10) parts.push(`That is down from ${priorAvg}% the week before. Worth noticing, gently.`);
+    else parts.push(`Similar to ${priorAvg}% the week before — steadiness is its own form of growth.`);
   }
-  if (avg >= 50) {
-    return `This week shows sincere practice across ${days} day${days === 1 ? '' : 's'}. Keep choosing presence over performance.`;
+
+  const top = topThemes(countThemes(thisWindow), 1)[0];
+  if (top) parts.push(`The thread that surfaces most this week is ${THEME_LABELS[top]}.`);
+
+  const totals = {
+    thanks:  thisWindow.filter((e) => e.thanks).length,
+    grace:   thisWindow.filter((e) => e.grace).length,
+    prayed:  thisWindow.filter((e) => e.prayed).length,
+    guarded: thisWindow.filter((e) => e.guarded).length,
+  };
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const high = sorted[0], low = sorted[sorted.length - 1];
+  if (high[1] > 0 && high[1] !== low[1]) {
+    parts.push(`Strongest practice: ${PRACTICE_LABELS[high[0]]}. Quietest: ${PRACTICE_LABELS[low[0]]}.`);
   }
-  return `This week may have felt scattered across ${days} day${days === 1 ? '' : 's'}. That is okay. Begin again with simple trust.`;
+
+  if (avg >= 75) parts.push('Stay grateful, stay dependent.');
+  else if (avg >= 50) parts.push('Consistency over intensity — keep returning.');
+  else parts.push('Begin again with simple trust.');
+
+  return parts.join(' ');
+}
+
+// Pattern Discernment — different from reflectionSummary. Looks at structural
+// signals (weekday rhythm, entry length, practice pairings) rather than themes.
+function patternDiscernment(entries) {
+  if (entries.length < 5) {
+    return 'Patterns become visible after a few more entries. Keep going gently.';
+  }
+
+  const observations = [];
+
+  // Weekday rhythm — needs at least 3 weekdays with 2+ entries each.
+  const byDay = {};
+  for (const e of entries.slice(0, 30)) {
+    const dow = parseLocalDate(e.date).getDay();
+    (byDay[dow] = byDay[dow] || []).push(practiceScore(e));
+  }
+  const dayAvgs = Object.entries(byDay)
+    .filter(([, arr]) => arr.length >= 2)
+    .map(([d, arr]) => [Number(d), arr.reduce((a, b) => a + b, 0) / arr.length]);
+  if (dayAvgs.length >= 3) {
+    const dayNames = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+    dayAvgs.sort((a, b) => b[1] - a[1]);
+    const best = dayAvgs[0], worst = dayAvgs[dayAvgs.length - 1];
+    if (best[1] - worst[1] >= 15) {
+      observations.push(`${dayNames[best[0]]} tend to show the steadiest practice; ${dayNames[worst[0]]} feel harder.`);
+    }
+  }
+
+  // Entry length signal — longer entries scoring higher suggests reflection time matters.
+  const longScores = entries.filter((e) => e.text.length >= 200).map(practiceScore);
+  const shortScores = entries.filter((e) => e.text.length < 80).map(practiceScore);
+  if (longScores.length >= 3 && shortScores.length >= 3) {
+    const longAvg = longScores.reduce((a, b) => a + b, 0) / longScores.length;
+    const shortAvg = shortScores.reduce((a, b) => a + b, 0) / shortScores.length;
+    if (longAvg - shortAvg >= 15) {
+      observations.push('Your longer entries tend to score higher — taking time to write seems to deepen the practice.');
+    }
+  }
+
+  // Practice pairing.
+  const both = entries.filter((e) => e.thanks && e.grace).length;
+  if (entries.length >= 10 && both / entries.length >= 0.5) {
+    observations.push('Thanks and grace often appear together for you — a natural pairing in your practice.');
+  }
+
+  if (!observations.length) {
+    return 'Your practice is unfolding without strong patterns yet — that itself is a kind of steadiness.';
+  }
+
+  return observations.join(' ');
 }
 
 function installMessage(isStandalone) {
@@ -282,7 +570,10 @@ export default function JournalingApp() {
     if (!notificationsEnabled) return;
     if (!('Notification' in window)) return;
 
+    let cancelled = false;
+
     function scheduleRandom() {
+      if (cancelled) return;
       randomTimer.current = setTimeout(() => {
         sendNotification();
         scheduleRandom();
@@ -293,11 +584,14 @@ export default function JournalingApp() {
       scheduleRandom();
     } else if (Notification.permission === 'default') {
       Notification.requestPermission().then((permission) => {
-        if (permission === 'granted') scheduleRandom();
+        if (!cancelled && permission === 'granted') scheduleRandom();
       }).catch(() => {});
     }
 
-    return () => clearTimeout(randomTimer.current);
+    return () => {
+      cancelled = true;
+      clearTimeout(randomTimer.current);
+    };
   }, [notificationsEnabled]);
 
   // FIX 4: Idle timer — bail out early when notifications are disabled,
@@ -402,6 +696,7 @@ export default function JournalingApp() {
   const insight = useMemo(() => reflectionSummary(entries), [entries]);
   const invitation = useMemo(() => nextInvitation(entries), [entries]);
   const weekly = useMemo(() => weeklyNarrative(entries), [entries]);
+  const patterns = useMemo(() => patternDiscernment(entries), [entries]);
   const installText = useMemo(() => installMessage(isStandalone), [isStandalone]);
 
   return (
@@ -434,12 +729,12 @@ export default function JournalingApp() {
           <div className="space-y-4">
             <div className="bg-white/85 backdrop-blur rounded-3xl border border-stone-200 p-5 shadow-sm space-y-3">
               <BrandBadge>Practice the Presence</BrandBadge>
-              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">How to Practice</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-stone-400">TACK — How to Practice</p>
               <ul className="space-y-2 text-sm text-stone-700">
-                <li>• Give God thanks in everything.</li>
-                <li>• Guard your soul from negative dwelling, judgment, and obsession.</li>
-                <li>• Talk to God all day long.</li>
-                <li>• Ask God for grace for every task.</li>
+                <li>• <strong>Thanksgiving</strong> in everything.</li>
+                <li>• <strong>Asking</strong> God for grace for every task.</li>
+                <li>• <strong>Communicate</strong> with God all day long.</li>
+                <li>• <strong>Keep</strong> your soul from negative dwelling, judgment, and obsession.</li>
               </ul>
             </div>
 
@@ -471,12 +766,13 @@ export default function JournalingApp() {
             <p>Here is a quick reference of the steps for Abiding Prayer. You can use these to help with your journaling for discovering where you still need to grow. Practicing daily will build the habit of living in God's presence.</p>
 
             <div>
-              <h3 className="font-semibold mb-2">Expressions of Faith</h3>
+              <h3 className="font-semibold mb-1">TACK</h3>
+              <p className="text-sm mb-2">To fasten or attach your heart to God — 4 steps:</p>
               <ul className="list-disc pl-5 space-y-1 text-sm">
-                <li>Giving God thanks in everything. Not that He authors bad things but that He is bigger and able to help and work all for good.</li>
-                <li>Guard your soul according to God's desires. Seek to avoid dwelling on negative things, not judging others, nor obsessing over figuring things out. Rather constantly choosing God's presence and praising Him.</li>
-                <li>Talking to God all day long, seeking to stay in conscious contact with Him.</li>
-                <li>Asking God for grace for every task.</li>
+                <li><strong>Thanksgiving</strong> for everything that happens. Not that He authors bad things but that He is bigger and able to help and work all for good.</li>
+                <li><strong>Asking</strong> God for grace for every task.</li>
+                <li><strong>Communicate</strong> with God all day long, seeking to stay in conscious contact with Him.</li>
+                <li><strong>Keep</strong> your soul according to God's desires. Seek to avoid dwelling on negative things, not judging others, nor obsessing over figuring things out. Rather constantly choosing God's presence and praising Him.</li>
               </ul>
             </div>
 
@@ -509,13 +805,29 @@ export default function JournalingApp() {
               placeholder="What happened today, and where is God inviting trust?"
             />
 
-            <p className="text-sm text-stone-500 mt-1">Consider these four steps as you journal</p>
+            <p className="text-sm text-stone-500 mt-1">Tap any of these four steps that applied today</p>
 
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Gave thanks</div>
-              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Guarded soul</div>
-              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Talked to God</div>
-              <div className="rounded-xl px-3 py-2 border border-stone-200 bg-stone-50">Asked for grace</div>
+              {[
+                { label: 'Thanksgiving', state: thanks,  set: setThanks  },
+                { label: 'Asking',       state: grace,   set: setGrace   },
+                { label: 'Communicate',  state: prayed,  set: setPrayed  },
+                { label: 'Keep',         state: guarded, set: setGuarded },
+              ].map(({ label, state, set }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => { triggerHaptic(); set((v) => !v); }}
+                  aria-pressed={state}
+                  className={`rounded-xl px-3 py-2 border text-left transition-colors ${
+                    state
+                      ? 'bg-stone-800 text-white border-stone-800'
+                      : 'bg-stone-50 text-stone-700 border-stone-200'
+                  }`}
+                >
+                  {state ? '✓ ' : ''}{label}
+                </button>
+              ))}
             </div>
 
             <button onClick={addEntry} className="w-full bg-stone-800 text-white rounded-2xl py-3 shadow-md active:scale-[0.98] transition-all duration-200">
@@ -534,10 +846,10 @@ export default function JournalingApp() {
                     </div>
                     <p className="text-sm whitespace-pre-wrap text-stone-700">{entry.text}</p>
                     <div className="flex flex-wrap gap-2 mt-3 text-[11px] text-stone-500">
-                      {entry.thanks && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Thanks</span>}
-                      {entry.guarded && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Guarded</span>}
-                      {entry.prayed && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Prayed</span>}
-                      {entry.grace && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Grace</span>}
+                      {entry.thanks && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Thanksgiving</span>}
+                      {entry.grace && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Asking</span>}
+                      {entry.prayed && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Communicate</span>}
+                      {entry.guarded && <span className="px-2 py-1 rounded-full bg-white border border-stone-200">Keep</span>}
                     </div>
                     <button onClick={() => deleteEntry(entry.id)} className="mt-3 text-red-500 text-sm">
                       Delete
@@ -613,7 +925,7 @@ export default function JournalingApp() {
 
             <div className="rounded-3xl bg-white border border-stone-200 p-5 shadow-sm">
               <p className="text-xs uppercase tracking-[0.2em] text-stone-400 mb-2">Pattern Discernment</p>
-              <p className="text-stone-700">{insight}</p>
+              <p className="text-stone-700">{patterns}</p>
             </div>
           </div>
         )}
